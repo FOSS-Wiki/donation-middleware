@@ -15,7 +15,7 @@ export default {
     if (event.type !== 'payment_intent.succeeded') return new Response('incorrect event type', { status: 400 });
 
     const intent = event.data.object;
-    const amount = intent.amount;
+    const amount = (intent.amount_received / 100).toFixed(2); // Pence -> Pounds
     const from = intent.metadata?.from;
 
     if (!from) return new Response('missing metadata', { status: 400 });
@@ -35,7 +35,7 @@ export default {
           args: {
             type: 'Finance/Donations',
             entity: {
-              'Finance/Amount': amount,
+              'Finance/Amount': parseFloat(amount),
               'Finance/Name': donor,
               'Finance/Date': date,
             }
