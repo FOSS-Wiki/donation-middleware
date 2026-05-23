@@ -1,21 +1,27 @@
 export default {
   async fetch(request, env) {
-    const secret = new URL(request.url).searchParams.get('secret');
-    if (secret !== env.OC_WEBHOOK_SECRET) return new Response('unauthorized', { status: 401 });
-
     if (request.method !== 'POST') return new Response('nope', { status: 405 });
 
-    const body = await request.json();
+    const body = await request.text();
+    const sig = request.headers.get('Stripe-Signature');
 
-    if (body.type !== 'order.paid') return new Response('ignored', { status: 200 });
+    if (!sig) return new Response('unauthorized', { status: 401 });
 
-    const order = body.data;
+    const isValid = await verifyStripeSignature(body, sig, env.STRIPE_WEBHOOK_SECRET);
+    if (!isValid) return new Response('unauthorized', { status: 401 });
 
-    const amount = order.totalAmount?.value ?? order.amount?.value;
-    const name = order.fromAccount?.name ?? order.createdByAccount?.name;
-    const date = body.createdAt ?? new Date().toISOString();
+    const event = JSON.parse(body);
 
-    if (!amount || !name) return new Response('missing fields', { status: 400 });
+    if (event.type !== 'payment_intent.succeeded') return new Response('incorrect event type', { status: 400 });
+
+    const intent = event.data.object;
+    const amount = intent.amount;
+    const from = intent.metadata?.from;
+
+    if (!from) return new Response('missing metadata', { status: 400 });
+
+    const donor = new URL(from).pathname.slice(1);
+    const date = new Date(intent.created * 1000).toISOString();
 
     const [fiberyRes, discordRes] = await Promise.all([
       fetch(`https://${env.FIBERY_ACCOUNT}.fibery.io/api/commands`, {
@@ -30,7 +36,7 @@ export default {
             type: 'Finance/Donations',
             entity: {
               'Finance/Amount': amount,
-              'Finance/Name': name,
+              'Finance/Name': donor,
               'Finance/Date': date,
             }
           }
@@ -39,7 +45,9 @@ export default {
       fetch(env.DISCORD_WEBHOOK, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: `Thank you ${name} for donating £${amount} to foss.wiki!` })
+        body: JSON.stringify({
+          content: `Thank you [${donor}](<${from}>) for donating £${amount} to foss.wiki!`
+        })
       })
     ]);
 
@@ -47,4 +55,27 @@ export default {
     if (!discordRes.ok) return new Response('discord error', { status: 500 });
     return new Response('ok', { status: 200 });
   }
+}
+
+async function verifyStripeSignature(body, sig, secret) {
+  const parts = Object.fromEntries(sig.split(',').map(p => p.split('=')));
+  const timestamp = parts['t'];
+  const expected = parts['v1'];
+
+  if (!timestamp || !expected) return false;
+
+  if (Math.abs(Date.now() / 1000 - parseInt(timestamp)) > 300) return false;
+
+  const payload = `${timestamp}.${body}`;
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+  const signed = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(payload));
+  const hex = Array.from(new Uint8Array(signed)).map(b => b.toString(16).padStart(2, '0')).join('');
+
+  return hex === expected;
 }
