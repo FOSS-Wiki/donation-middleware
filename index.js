@@ -18,9 +18,7 @@ export default {
     const amount = (intent.amount_received / 100).toFixed(2); // Pence -> Pounds
     const from = intent.metadata?.from;
 
-    if (!from) return new Response('missing metadata', { status: 400 });
-
-    const donor = new URL(from).pathname.slice(1);
+    const donor = from ? new URL(from).pathname.slice(1) : 'anonymous';
     const date = new Date(intent.created * 1000).toISOString();
 
     const [fiberyRes, discordRes] = await Promise.all([
@@ -46,7 +44,9 @@ export default {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          content: `Thank you [${donor}](<${from}>) for donating £${amount} to foss.wiki!`
+          content: donor === 'anonymous'
+            ? `Thank you anonymous for donating £${amount} to foss.wiki!`
+            : `Thank you [${donor}](<${from}>) for donating £${amount} to foss.wiki!`
         })
       })
     ]);
