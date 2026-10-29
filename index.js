@@ -16,12 +16,10 @@ export default {
 
     const intent = event.data.object;
     const amount = (intent.amount_received / 100).toFixed(2); // Pence -> Pounds
-    const from = intent.metadata?.from;
 
-    const donor = from ? new URL(from).pathname.slice(1) : 'anonymous';
     const date = new Date(intent.created * 1000).toISOString();
 
-    const [fiberyRes, discordRes] = await Promise.all([
+    const res = await Promise.all([
       fetch(`https://${env.FIBERY_ACCOUNT}.fibery.io/api/commands`, {
         method: 'POST',
         headers: {
@@ -31,28 +29,20 @@ export default {
         body: JSON.stringify([{
           command: 'fibery.entity/create',
           args: {
-            type: 'Finance/Donations',
+            type: 'Finance/Transactions',
             entity: {
               'Finance/Amount': parseFloat(amount),
-              'Finance/Name': donor,
+              'Finance/Name': "Donation",
               'Finance/Date': date,
+              'Finance/Vendor': "Liberapay",
+              'Finance/Category': "Donation"
             }
           }
         }])
       }),
-      fetch(env.DISCORD_WEBHOOK, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          content: donor === 'anonymous'
-            ? `Thank you anonymous for donating £${amount} to foss.wiki!`
-            : `Thank you [${donor}](<${from}>) for donating £${amount} to foss.wiki!`
-        })
-      })
     ]);
 
-    if (!fiberyRes.ok) return new Response('fibery error', { status: 500 });
-    if (!discordRes.ok) return new Response('discord error', { status: 500 });
+    if (!res.ok) return new Response('error', { status: 500 });
     return new Response('ok', { status: 200 });
   }
 }
